@@ -1,82 +1,75 @@
+import os
+import hmac
+import hashlib
 import json
-import logging
-from typing import Optional
-from fastapi import APIRouter, Header, Request, HTTPException, status
-from app.services.scanner_service import ScannerService
-from app.services.github_service import GitHubService
-from app.services.vault_service import VaultService
-from app.config.settings import settings
+from fastapi import APIRouter, Request, HTTPException
+from dotenv import load_dotenv
 
-logger = logging.getLogger(__name__)
+load_dotenv()
 
-router = APIRouter(prefix="/webhook", tags=["GitHub Webhook"])
-vault_service = VaultService(vault_addr=settings.VAULT_ADDR, token=settings.VAULT_TOKEN)
+router = APIRouter()
 
 
-@router.get("/status")
-def webhook_status():
-    return {
-        "status": "ready",
-        "description": "GitOps Secret Shield GitHub Webhook Receiver is active",
-        "supported_events": ["push", "pull_request"],
-    }
-
-
-@router.post("/")
-async def receive_github_webhook(
-    request: Request,
-    x_github_event: str = Header(default="push"),
-    x_hub_signature_256: Optional[str] = Header(default=None),
-):
-    body_bytes = await request.body()
-    
-    # Optional HMAC Verification (enforced if signature header is provided or in production)
-    if x_hub_signature_256 and settings.GITHUB_WEBHOOK_SECRET != "change-me-secret":
-        is_valid = GitHubService.verify_signature(
-            payload_body=body_bytes,
-            secret_token=settings.GITHUB_WEBHOOK_SECRET,
-            signature_header=x_hub_signature_256,
+@router.post("/github")
+async def github_webhook(request: Request):
+    # Read GitHub webhook secret
+    webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
+    if not webhook_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="Webhook secret is not configured"
         )
-        if not is_valid:
-            logger.warning("Invalid GitHub webhook signature detected!")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid HMAC signature",
-            )
+
+    # Read request body
+    body = await request.body()
+
+    # Get GitHub signature
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not signature:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing GitHub signature"
+        )
+
+    # Verify webhook signature using HMAC-SHA256
+    expected_signature = "sha256=" + hmac.new(
+        webhook_secret.encode("utf-8"),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_signature, signature):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid GitHub webhook signature"
+        )
+
+    # Identify GitHub Event
+    event = request.headers.get("X-GitHub-Event", "ping")
 
     try:
-        payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+        payload = json.loads(body.decode("utf-8")) if body else {}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
 
-    commits = payload.get("commits", [])
-    repo_name = payload.get("repository", {}).get("full_name", "local/test-repo")
-
-    # Automated Secret Scanning on received commits
-    findings = ScannerService.scan_commit_payload(commits)
-
-    # If any secrets are detected, trigger alert & rotation workflow
-    if findings:
-        logger.warning(f"🚨 CRITICAL: {len(findings)} exposed secret(s) detected in {repo_name}!")
-        rotation_results = []
-        for finding in findings:
-            # Trigger Vault revocation/rotation
-            rotation = vault_service.revoke_secret(finding.get("detector_name"))
-            rotation_results.append(rotation)
+    # Process Push events
+    if event == "push":
+        repo_name = payload.get("repository", {}).get("full_name", "unknown")
+        pusher = payload.get("pusher", {}).get("name", "unknown")
+        commits = payload.get("commits", [])
 
         return {
-            "status": "alert_triggered",
+            "status": "success",
+            "event": "push",
             "repository": repo_name,
-            "event": x_github_event,
-            "total_leaks": len(findings),
-            "findings": findings,
-            "remediation_status": "rotation_initiated",
+            "pusher": pusher,
+            "commit_count": len(commits),
+            "message": "Webhook received and signature verified. Ready for secret scanning."
         }
 
+    # Handle ping or other events
     return {
-        "status": "clean",
-        "repository": repo_name,
-        "event": x_github_event,
-        "message": "No secrets detected in commit payload",
-        "commits_scanned": len(commits),
+        "status": "success",
+        "event": event,
+        "message": f"GitHub {event} event received and verified successfully."
     }

@@ -19,6 +19,9 @@ SECRET_PATTERNS = {
     "Exposed Password / Secret Key Assignment": r"(?i)(?:api_key|apikey|secret_key|app_secret|password|passwd|db_password|access_token)\s*[:=]\s*['\"]([^'\"]{8,})['\"]",
 }
 
+# Documentation and example files to ignore to avoid false positives
+IGNORED_EXTENSIONS = (".md", ".markdown", ".env.example")
+
 
 class ScannerService:
     """Service to handle automated secret scanning."""
@@ -33,6 +36,10 @@ class ScannerService:
     @classmethod
     def scan_text(cls, content: str, file_path: str = "commit_data") -> List[Dict[str, Any]]:
         """Scans arbitrary text or code changes for exposed credentials."""
+        # Skip documentation and example config files
+        if any(file_path.lower().endswith(ext) for ext in IGNORED_EXTENSIONS):
+            return []
+
         findings = []
         lines = content.splitlines()
 
