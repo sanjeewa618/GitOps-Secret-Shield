@@ -4,14 +4,19 @@ from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Common high-risk credential patterns (built-in fallback engine)
+# Enterprise-grade Secret & Credential Detection Patterns
 SECRET_PATTERNS = {
     "AWS Access Key": r"(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
     "GitHub Personal Access Token": r"ghp_[0-9a-zA-Z]{36}",
     "GitHub Fine-grained PAT": r"github_pat_[0-9a-zA-Z_]{82}",
-    "Slack Token": r"xox[baprs]-[0-9a-zA-Z]{10,48}",
-    "Generic Private Key": r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
-    "Generic API Key / Secret": r"(?i)(?:api_key|apikey|secret_key|app_secret|auth_token)\s*[:=]\s*['\"]([0-9a-zA-Z\-_]{16,})['\"]",
+    "Slack API Token": r"xox[baprs]-[0-9a-zA-Z]{10,48}",
+    "Stripe Secret Key": r"(?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{24,99}",
+    "OpenAI API Key": r"sk-(?:proj-)?[0-9a-zA-Z\-_]{20,}",
+    "Google API Key": r"AIza[0-9A-Za-z\-_]{35}",
+    "Database Credentials URI": r"(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[a-zA-Z0-9_\-\.]+:[^@\s]+@[a-zA-Z0-9_\-\.]+",
+    "RSA / SSH Private Key": r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
+    "JSON Web Token (JWT)": r"ey[A-Za-z0-9_-]{10,}\.ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+    "Exposed Password / Secret Key Assignment": r"(?i)(?:api_key|apikey|secret_key|app_secret|password|passwd|db_password|access_token)\s*[:=]\s*['\"]([^'\"]{8,})['\"]",
 }
 
 
@@ -41,7 +46,7 @@ class ScannerService:
                         "raw_secret_masked": cls.mask_secret(raw_secret),
                         "file_path": file_path,
                         "line_number": line_idx,
-                        "severity": "CRITICAL" if "Key" in detector_name or "Token" in detector_name else "HIGH",
+                        "severity": "CRITICAL",
                         "status": "leaked",
                     })
 
