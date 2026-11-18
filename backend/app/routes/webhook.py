@@ -1,9 +1,8 @@
 import os
-import hmac
-import hashlib
 import json
 from fastapi import APIRouter, Request, HTTPException
 from dotenv import load_dotenv
+from app.services.github_service import GitHubService
 
 load_dotenv()
 
@@ -31,14 +30,12 @@ async def github_webhook(request: Request):
             detail="Missing GitHub signature"
         )
 
-    # Verify webhook signature using HMAC-SHA256
-    expected_signature = "sha256=" + hmac.new(
-        webhook_secret.encode("utf-8"),
-        body,
-        hashlib.sha256
-    ).hexdigest()
-
-    if not hmac.compare_digest(expected_signature, signature):
+    # Verify webhook signature using error-safe GitHubService
+    if not GitHubService.verify_signature(
+        payload_body=body,
+        secret_token=webhook_secret,
+        signature_header=signature
+    ):
         raise HTTPException(
             status_code=401,
             detail="Invalid GitHub webhook signature"

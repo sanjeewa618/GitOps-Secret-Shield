@@ -9,16 +9,26 @@ class GitHubService:
     """Service to handle GitHub Webhook verification and GitHub API communication."""
 
     @staticmethod
-    def verify_signature(payload_body: bytes, secret_token: str, signature_header: str) -> bool:
-        if not signature_header or not secret_token:
+    def verify_signature(
+        payload_body: bytes,
+        secret_token: str,
+        signature_header: str
+    ) -> bool:
+        """Safely verify GitHub webhook HMAC-SHA256 signature without crashing on malformed headers."""
+        if not secret_token or not signature_header:
             return False
-        
-        hash_type, signature = signature_header.split("=")
-        if hash_type != "sha256":
+
+        hash_type, separator, signature = signature_header.partition("=")
+        if not separator or hash_type != "sha256" or not signature:
             return False
-            
-        mac = hmac.new(secret_token.encode(), msg=payload_body, digestmod=hashlib.sha256)
-        return hmac.compare_digest(mac.hexdigest(), signature)
+
+        expected_signature = hmac.new(
+            secret_token.encode("utf-8"),
+            msg=payload_body,
+            digestmod=hashlib.sha256
+        ).hexdigest()
+
+        return hmac.compare_digest(expected_signature, signature)
 
     @staticmethod
     def create_commit_comment(repo_full_name: str, commit_sha: str, comment: str) -> bool:
