@@ -12,6 +12,14 @@ backend/venv/
 # Environment variables
 .env
 .env.local
+backend/.env
+
+# Node.js
+node_modules/
+frontend/node_modules/
+.npm
+dist/
+build/
 
 # Logs
 *.log

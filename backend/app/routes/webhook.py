@@ -1,8 +1,15 @@
 import os
 import json
 import logging
-from fastapi import APIRouter, Request, HTTPException
+from typing import List, Dict, Any
+from fastapi import APIRouter, Request, HTTPException, Depends
+from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+
+from app.database.session import get_db
+from app.models.incident import IncidentStatus
+from app.schemas.incident import IncidentCreate
+from app.services.incident_service import IncidentService
 from app.services.github_service import GitHubService
 from app.services.scanner_service import ScannerService
 
@@ -13,7 +20,7 @@ router = APIRouter()
 
 
 @router.post("/github")
-async def github_webhook(request: Request):
+async def github_webhook(request: Request, db: Session = Depends(get_db)):
     # 1. Read GitHub webhook secret
     webhook_secret = os.getenv("GITHUB_WEBHOOK_SECRET")
     if not webhook_secret:
@@ -51,17 +58,17 @@ async def github_webhook(request: Request):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
 
-    # 5. Process Push Events with Automated Secret Scanning
+    # 5. Process Push Events with Automated Secret Scanning & Audit Logging
     if event == "push":
         repo_name = payload.get("repository", {}).get("full_name", "unknown")
         pusher = payload.get("pusher", {}).get("name", "unknown")
         commits = payload.get("commits", [])
 
-        all_findings = []
+        raw_findings: List[Dict[str, Any]] = []
 
         # Step 5a: Scan commit messages for sensitive data
         msg_findings = ScannerService.scan_commit_payload(commits)
-        all_findings.extend(msg_findings)
+        raw_findings.extend(msg_findings)
 
         # Step 5b: Inspect changed files and git diffs for each pushed commit via GitHub API
         for commit in commits:
@@ -79,20 +86,72 @@ async def github_webhook(request: Request):
                         for finding in patch_findings:
                             finding["commit_sha"] = commit_sha
                             finding["author"] = pusher
-                            all_findings.append(finding)
+                            raw_findings.append(finding)
 
-        # Step 5c: If secrets are detected, trigger alert
-        if all_findings:
-            logger.warning(f"🚨 CRITICAL: {len(all_findings)} exposed secrets detected in {repo_name} pushed by {pusher}!")
+        # Step 5c: If secrets are detected, persist audit logs to PostgreSQL & trigger alert
+        if raw_findings:
+            persisted_incidents = []
+            for finding in raw_findings:
+                commit_sha = finding.get("commit_sha", (commits[0].get("id") if commits else "unknown"))
+                incident_in = IncidentCreate(
+                    repository=repo_name,
+                    commit_sha=commit_sha,
+                    author=finding.get("author", pusher),
+                    detector_name=finding.get("detector_name", "Unknown Secret"),
+                    secret_masked=finding.get("raw_secret_masked", "********"),
+                    file_path=finding.get("file_path", "unknown"),
+                    line_number=finding.get("line_number", 1),
+                    severity=finding.get("severity", "CRITICAL"),
+                    status=IncidentStatus.ROTATION_REQUIRED.value,
+                    remediation_status="rotation_required",
+                    remediation_notes=f"Exposed secret detected in push by {pusher} in commit {commit_sha[:7]}",
+                )
+                incident_obj, created = IncidentService.create_or_get_incident(db, incident_in)
+
+                persisted_incidents.append({
+                    "incident_id": incident_obj.incident_id,
+                    "detector_name": incident_obj.detector_name,
+                    "secret_masked": incident_obj.secret_masked,
+                    "file_path": incident_obj.file_path,
+                    "line_number": incident_obj.line_number,
+                    "severity": incident_obj.severity,
+                    "status": incident_obj.status,
+                    "remediation_status": incident_obj.remediation_status,
+                    "commit_sha": incident_obj.commit_sha,
+                    "author": incident_obj.author,
+                    "is_new": created,
+                })
+
+            logger.warning(
+                f"CRITICAL: {len(persisted_incidents)} secrets recorded in PostgreSQL for {repo_name} pushed by {pusher}!"
+            )
+
+            # Optional: Post security alert comment on the commit if possible
+            for commit in commits:
+                commit_sha = commit.get("id")
+                commit_findings = [f for f in persisted_incidents if f["commit_sha"] == commit_sha]
+                if commit_findings and commit_sha:
+                    findings_summary = "\n".join(
+                        [f"- **Incident ID**: `{f['incident_id']}` | **Type**: {f['detector_name']} | **File**: `{f['file_path']}:{f['line_number']}`" for f in commit_findings]
+                    )
+                    comment_body = (
+                        f"### 🛡️ GitOps Secret Shield – Security Alert\n\n"
+                        f"The automated security scanner detected **{len(commit_findings)} exposed secret(s)** in this commit:\n\n"
+                        f"{findings_summary}\n\n"
+                        f"> ⚠️ **Action Required**: The exposed credentials have been logged into the DevSecOps Audit Log. "
+                        f"Immediate rotation is required. Never commit plain credentials to version control."
+                    )
+                    await GitHubService.create_commit_comment(repo_name, commit_sha, comment_body)
+
             return {
                 "status": "alert_triggered",
                 "event": "push",
                 "repository": repo_name,
                 "pusher": pusher,
                 "commits_scanned": len(commits),
-                "total_leaks": len(all_findings),
-                "findings": all_findings,
-                "remediation_status": "rotation_required"
+                "total_leaks": len(persisted_incidents),
+                "incidents": persisted_incidents,
+                "remediation_status": "rotation_required",
             }
 
         return {
@@ -101,12 +160,12 @@ async def github_webhook(request: Request):
             "repository": repo_name,
             "pusher": pusher,
             "commits_scanned": len(commits),
-            "message": "Pushed commits and changed files scanned successfully. No secrets detected."
+            "message": "Pushed commits and changed files scanned successfully. No secrets detected.",
         }
 
     # Handle ping or other events
     return {
         "status": "success",
         "event": event,
-        "message": f"GitHub {event} event received and verified successfully."
+        "message": f"GitHub {event} event received and verified successfully.",
     }

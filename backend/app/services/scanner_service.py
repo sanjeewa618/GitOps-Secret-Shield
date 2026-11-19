@@ -19,7 +19,7 @@ SECRET_PATTERNS = {
     "Exposed Password / Secret Key Assignment": r"(?i)(?:api_key|apikey|secret_key|app_secret|password|passwd|db_password|access_token)\s*[:=]\s*['\"]([^'\"]{8,})['\"]",
 }
 
-# Documentation and example files to ignore to avoid false positives
+# Documentation and test files to ignore to avoid false positives
 IGNORED_EXTENSIONS = (".md", ".markdown", ".env.example")
 
 
@@ -34,10 +34,21 @@ class ScannerService:
         return f"{secret[:4]}...{secret[-4:]}"
 
     @classmethod
+    def should_ignore_file(cls, file_path: str) -> bool:
+        """Determines if a file should be ignored (docs, examples, test suites)."""
+        p = file_path.lower().replace("\\", "/")
+        if any(p.endswith(ext) for ext in IGNORED_EXTENSIONS):
+            return True
+        filename = p.split("/")[-1] if "/" in p else p
+        # Exclude automated test suites containing dummy mock keys
+        if filename.startswith("test_") or filename.endswith("_test.py") or "/tests/" in p:
+            return True
+        return False
+
+    @classmethod
     def scan_text(cls, content: str, file_path: str = "commit_data") -> List[Dict[str, Any]]:
         """Scans arbitrary text or code changes for exposed credentials."""
-        # Skip documentation and example config files
-        if any(file_path.lower().endswith(ext) for ext in IGNORED_EXTENSIONS):
+        if cls.should_ignore_file(file_path):
             return []
 
         findings = []
