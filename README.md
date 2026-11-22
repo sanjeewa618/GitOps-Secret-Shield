@@ -139,15 +139,45 @@ DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5434/secret_shiel
 ```
 
 ### 3. Start FastAPI Backend
+
+> [!TIP]
+> **Windows Application Control Notice**:
+> In Windows environments, Windows Defender / Application Control policy may block direct execution of unsigned virtual environment wrapper scripts like `uvicorn.exe`. Always execute Uvicorn through the Python module runner (`python -m uvicorn`) or use the provided automated startup scripts.
+
+#### Option A: Using the Automated Startup Scripts (Recommended)
+From the project root:
+```powershell
+.\run_backend.ps1
+```
+*(or double-click `run_backend.bat`)*
+
+#### Option B: Manual Execution via PowerShell
 ```powershell
 cd backend
 .\venv\Scripts\Activate.ps1
 $env:PYTHONPATH="backend"
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
-- API Base: `http://localhost:8000`
-- Swagger Docs: `http://localhost:8000/docs`
-- Security Dashboard: `http://localhost:8000/dashboard/`
+*(or specify python binary directly:)*
+```powershell
+.\venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+Expected startup output:
+```text
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [XXXXX]
+INFO:     Application startup complete.
+```
+
+#### Accessing Services & Dashboard:
+* **🛡️ Security Dashboard**: [http://localhost:8000/dashboard/](http://localhost:8000/dashboard/) (or [http://127.0.0.1:8000/dashboard/](http://127.0.0.1:8000/dashboard/))
+* **🔄 Root Browser Auto-Redirect**: Navigating directly to `http://localhost:8000` or `http://127.0.0.1:8000` in a web browser automatically issues an HTTP 307 redirect straight to the Security Dashboard `/dashboard/`.
+* **📑 Swagger REST API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+* **❤️ Health Check Endpoint**: [http://localhost:8000/health](http://localhost:8000/health)
+
+> [!NOTE]
+> If a blank or white screen appears upon opening the dashboard for the first time, perform a hard refresh (**`Ctrl + F5`**) to clear browser cache and ensure all bundled assets load properly.
 
 ### 4. Optional: Run Standalone React Frontend (Dev Server)
 ```powershell
