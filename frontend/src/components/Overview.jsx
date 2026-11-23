@@ -1,5 +1,6 @@
 import React from 'react';
 
+
 export default function Overview({ stats, incidents, onSelectTab, onSelectIncident }) {
   const total = stats?.total_incidents || 0;
   const critical = stats?.critical_incidents || 0;
