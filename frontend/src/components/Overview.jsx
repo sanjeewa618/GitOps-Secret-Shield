@@ -10,6 +10,7 @@ export default function Overview({ stats, incidents, onSelectTab, onSelectIncide
   const bySeverity = stats?.by_severity || {};
   const byRepo = stats?.by_repository || {};
 
+  
   // Compute status breakdown from recent incidents
   const statusCounts = incidents.reduce((acc, inc) => {
     acc[inc.status] = (acc[inc.status] || 0) + 1;
