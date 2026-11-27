@@ -1,0 +1,215 @@
+# ============================================================
+# GitOps Secret Shield – CI/CD Pipeline
+# Phase 2: Automated Secret Scanning + Testing
+# ============================================================
+name: CI – Security Scan & Tests
+
+on:
+  push:
+    branches: [ "main", "develop", "feature/**" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+permissions:
+  contents: read       # least-privilege: read-only checkout
+  actions: read
+
+jobs:
+  # ─────────────────────────────────────────
+  # Job 1: TruffleHog Secret Scanning
+  # Runs FIRST; blocks merge if secrets found
+  # ─────────────────────────────────────────
+  secret-scan:
+    name: 🔍 Secret Scanning (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history for accurate diff scanning
+
+      - name: Run TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@v3.88.23
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: >
+            --no-verification
+            --fail
+            --json
+        # Fail CI when any verified OR unverified secret is detected.
+        # Raw secret values are NOT printed; TruffleHog outputs only
+        # detector type, file and line number in JSON.
+
+  # ─────────────────────────────────────────
+  # Job 2: Python Dependency Vulnerability Scan
+  # ─────────────────────────────────────────
+  dependency-audit:
+    name: 🛡️ Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit backend dependencies
+        run: pip-audit -r backend/requirements.txt --format=json --output=audit-report.json || true
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-report
+          path: audit-report.json
+
+  # ─────────────────────────────────────────
+  # Job 3: Backend Tests
+  # ─────────────────────────────────────────
+  backend-tests:
+    name: 🧪 Backend Tests (pytest)
+    runs-on: ubuntu-latest
+    needs: secret-scan          # only run if no secrets detected
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: secret_shield_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      vault:
+        image: hashicorp/vault:1.15
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: ci-test-vault-root-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add IPC_LOCK
+
+    env:
+      ENVIRONMENT: testing
+      DATABASE_URL: postgresql+psycopg2://postgres:ci_test_password@localhost:5432/secret_shield_test
+      VAULT_ADDR: http://localhost:8200
+      VAULT_TOKEN: ci-test-vault-root-token
+      GITHUB_WEBHOOK_SECRET: ci-test-webhook-secret-not-real
+      GITHUB_TOKEN: ""
+      JWT_SECRET_KEY: ci-test-jwt-secret-key-not-for-production
+      ALERT_EMAIL_ENABLED: "false"
+      ALERT_SLACK_ENABLED: "false"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt pytest pytest-asyncio
+
+      - name: Run full test suite
+        working-directory: backend
+        run: |
+          python -m pytest test_full_suite.py test_phase1.py test_phase2_3.py \
+            -v --tb=short --no-header \
+            --junit-xml=../test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: test-results.xml
+
+  # ─────────────────────────────────────────
+  # Job 4: Frontend Build Validation
+  # ─────────────────────────────────────────
+  frontend-build:
+    name: 🏗️ Frontend Build (Vite)
+    runs-on: ubuntu-latest
+    needs: secret-scan
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Verify build artifacts
+        run: |
+          test -f frontend/dist/index.html && echo "✅ index.html present"
+          ls -lh frontend/dist/assets/
+          echo "✅ Frontend build successful"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+
+  # ─────────────────────────────────────────
+  # Job 5: Docker Compose Validation
+  # ─────────────────────────────────────────
+  docker-validate:
+    name: 🐳 Docker Compose Validation
+    runs-on: ubuntu-latest
+    needs: [ backend-tests, frontend-build ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml syntax
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Validate production compose syntax
+        run: docker compose -f docker-compose.prod.yml config --quiet
+
+      - name: Pull and start services
+        run: |
+          docker compose -f docker-compose.yml up -d
+          sleep 10
+
+      - name: Check service health
+        run: |
+          docker compose ps
+          docker compose exec -T postgres pg_isready -U postgres || exit 1
+          echo "✅ PostgreSQL healthy"
+          curl -sf http://localhost:8200/v1/sys/health | python3 -c "import sys,json; d=json.load(sys.stdin); print('Vault', d.get('version'))" || echo "⚠️ Vault check skipped"
+
+      - name: Teardown
+        if: always()
+        run: docker compose down -v

@@ -6,16 +6,25 @@ from app.schemas.incident import IncidentUpdate
 from app.services.incident_service import IncidentService
 from app.providers.base import BaseRotationProvider
 from app.providers.postgres_provider import PostgreSQLRotationProvider
+from app.providers.mysql_provider import MySQLRotationProvider
+from app.providers.redis_provider import RedisRotationProvider
+from app.providers.mongodb_provider import MongoDBRotationProvider
 
 logger = logging.getLogger(__name__)
 
 
 class RotationService:
-    """Orchestrates automated and manual remediation workflows for exposed credentials."""
+    """
+    Orchestrates automated and manual remediation workflows for exposed credentials.
+    Phase 2: Extended with MySQL, Redis, MongoDB providers.
+    """
 
     def __init__(self):
         self.providers: List[BaseRotationProvider] = [
             PostgreSQLRotationProvider(),
+            MySQLRotationProvider(),
+            RedisRotationProvider(),
+            MongoDBRotationProvider(),
         ]
 
     def find_provider(self, detector_name: str) -> Optional[BaseRotationProvider]:

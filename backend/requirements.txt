@@ -6,3 +6,13 @@ httpx>=0.28.0
 sqlalchemy>=2.0.36
 psycopg2-binary>=2.9.10
 alembic>=1.14.0
+
+# Phase 2: Authentication & Authorization
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
+
+# Phase 2: Optional rotation providers (install when needed)
+# pymysql>=1.1.0
+# redis>=5.0.0
+# pymongo>=4.0.0

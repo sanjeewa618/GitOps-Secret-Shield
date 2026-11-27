@@ -9,10 +9,21 @@ venv/
 ENV/
 backend/venv/
 
-# Environment variables
+# Environment variables & Secrets
 .env
 .env.local
+.env.prod
+.env.*.local
+!.env.example
 backend/.env
+*.pem
+*.key
+nginx/ssl/*.key
+nginx/ssl/*.crt
+
+# Temporary security test directories
+temp-test/
+temp-security-test/
 
 # Node.js
 node_modules/

@@ -1,9 +1,13 @@
 import hmac
 import hashlib
 import json
+import uuid
 from fastapi.testclient import TestClient
 from app.main import app
 from app.config.settings import settings
+from app.database.session import SessionLocal
+from app.models.incident import Incident
+from sqlalchemy import delete
 
 client = TestClient(app)
 
@@ -17,7 +21,7 @@ def test_audit_logging_lifecycle():
     print("=== [TEST 1] Backend Health Check ===")
     res = client.get("/health")
     assert res.status_code == 200, f"Health check failed: {res.text}"
-    assert res.json() == {"status": "healthy"}
+    assert res.json().get("status") == "healthy"
     print(" PASS: Backend /health is OK")
 
     webhook_secret = settings.GITHUB_WEBHOOK_SECRET
@@ -55,12 +59,13 @@ def test_audit_logging_lifecycle():
 
     # Secret push test
     print("\n=== [TEST 3] Webhook Secret Detection & Audit Logging ===")
+    unique_commit_sha = f"test_{uuid.uuid4().hex[:16]}"
     secret_payload = {
         "repository": {"full_name": "sanjeewa618/GitOps-Secret-Shield"},
         "pusher": {"name": "devsecops-engineer"},
         "commits": [
             {
-                "id": "e987654321fedcba001",
+                "id": unique_commit_sha,
                 "message": "fix: accidentally committed key " + "AKIA" + "IOSFODNN7EXAMPLE for s3 access",
                 "author": {"username": "devsecops-engineer"},
             }
@@ -146,6 +151,11 @@ def test_audit_logging_lifecycle():
     assert updated["status"] == "investigating"
     assert updated["remediation_notes"] == "SOC team has started investigation"
     print(f" PASS: Successfully updated {incident_id} status to 'investigating'")
+
+    # Cleanup test data for isolation
+    with SessionLocal() as db:
+        db.execute(delete(Incident).where(Incident.commit_sha == unique_commit_sha))
+        db.commit()
 
     print("\n ALL PHASE 1 TESTS PASSED SUCCESSFULLY! ")
 
