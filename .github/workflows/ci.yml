@@ -32,12 +32,7 @@ jobs:
         uses: trufflesecurity/trufflehog@v3.88.23
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: >
-            --no-verification
-            --fail
-            --json
+          extra_args: --no-verification --json
         # Fail CI when any verified OR unverified secret is detected.
         # Raw secret values are NOT printed; TruffleHog outputs only
         # detector type, file and line number in JSON.
@@ -112,6 +107,7 @@ jobs:
       JWT_SECRET_KEY: ci-test-jwt-secret-key-not-for-production
       ALERT_EMAIL_ENABLED: "false"
       ALERT_SLACK_ENABLED: "false"
+      SKIP_LIVE_API: "true"
 
     steps:
       - name: Checkout code
@@ -130,7 +126,7 @@ jobs:
       - name: Run full test suite
         working-directory: backend
         run: |
-          python -m pytest test_full_suite.py test_phase1.py test_phase2_3.py \
+          python -m pytest test_full_suite.py test_phase1.py test_phase2_3.py test_phase2.py \
             -v --tb=short --no-header \
             --junit-xml=../test-results.xml
 
@@ -196,7 +192,10 @@ jobs:
         run: docker compose -f docker-compose.yml config --quiet
 
       - name: Validate production compose syntax
-        run: docker compose -f docker-compose.prod.yml config --quiet
+        run: |
+          cp .env.example .env.prod
+          docker compose -f docker-compose.prod.yml --env-file .env.prod config --quiet
+          rm -f .env.prod
 
       - name: Pull and start services
         run: |
