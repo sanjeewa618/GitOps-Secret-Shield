@@ -70,7 +70,7 @@ jobs:
   backend-tests:
     name: 🧪 Backend Tests (pytest)
     runs-on: ubuntu-latest
-    needs: secret-scan          # only run if no secrets detected
+    needs: [ secret-scan, frontend-build ]
 
     services:
       postgres:
@@ -123,10 +123,21 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt pytest pytest-asyncio
 
+      - name: Download built frontend for dashboard endpoint test
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Initialize test database schema
+        working-directory: backend
+        run: |
+          python -c "from app.database.base import Base; from app.database.session import engine; from app.main import _apply_phase3_migrations; Base.metadata.create_all(bind=engine); _apply_phase3_migrations(); print('DB schema ready')"
+
       - name: Run full test suite
         working-directory: backend
         run: |
-          python -m pytest test_full_suite.py test_phase1.py test_phase2_3.py test_phase2.py \
+          python -m pytest test_full_suite.py test_phase1.py test_phase2_3.py test_phase2.py test_phase3.py \
             -v --tb=short --no-header \
             --junit-xml=../test-results.xml
 
