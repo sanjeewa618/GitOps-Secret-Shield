@@ -126,6 +126,7 @@ export default function IncidentList({ incidents, onSelectIncident, onTriggerRot
               <tr className="border-b border-slate-800 bg-slate-950/80 text-[11px] font-mono text-slate-400 uppercase tracking-wider">
                 <th className="py-3 px-4">Incident ID</th>
                 <th className="py-3 px-4">Detector Rule</th>
+                <th className="py-3 px-4">Risk Score</th>
                 <th className="py-3 px-4">Masked Secret</th>
                 <th className="py-3 px-4">Location (File:Line)</th>
                 <th className="py-3 px-4">Committer</th>
@@ -136,7 +137,7 @@ export default function IncidentList({ incidents, onSelectIncident, onTriggerRot
             <tbody className="divide-y divide-slate-800/60 font-mono">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500 font-sans">
+                  <td colSpan={8} className="py-12 text-center text-slate-500 font-sans">
                     No matching security incidents found.
                   </td>
                 </tr>
@@ -159,6 +160,27 @@ export default function IncidentList({ incidents, onSelectIncident, onTriggerRot
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[11px]">
                         {inc.detector_name}
+                      </span>
+                      {inc.is_false_positive && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 text-[10px]">
+                          FP
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Risk Score */}
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <span className={`font-bold ${
+                        (inc.risk_score ?? 75) >= 80
+                          ? 'text-rose-400'
+                          : (inc.risk_score ?? 75) >= 60
+                          ? 'text-amber-400'
+                          : 'text-emerald-400'
+                      }`}>
+                        {inc.risk_score ?? 75}
+                      </span>
+                      <span className="text-[10px] text-slate-500 ml-1">
+                        ({inc.severity})
                       </span>
                     </td>
 

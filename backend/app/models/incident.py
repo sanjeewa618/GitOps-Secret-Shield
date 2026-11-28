@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, DateTime, UniqueConstraint, Enum, Text
+from sqlalchemy import String, Integer, DateTime, UniqueConstraint, Enum, Text, Float, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database.base import Base
 import enum
@@ -41,6 +41,19 @@ class Incident(Base):
     remediation_status: Mapped[str] = mapped_column(String(64), default="pending")
     remediation_notes: Mapped[str] = mapped_column(Text, nullable=True)
     vault_secret_path: Mapped[str] = mapped_column(String(512), nullable=True)
+
+    # Phase 3: Classification, Risk Scoring, Correlation & False-Positive fields
+    secret_fingerprint: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
+    secret_category: Mapped[str] = mapped_column(String(64), nullable=True, default="generic_secret")
+    risk_score: Mapped[float] = mapped_column(Float, nullable=True, default=75.0)
+    risk_factors: Mapped[str] = mapped_column(Text, nullable=True)  # JSON string
+    correlation_group_id: Mapped[str] = mapped_column(String(64), nullable=True, index=True)
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=True, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True, default=lambda: datetime.now(timezone.utc))
+    is_false_positive: Mapped[bool] = mapped_column(Boolean, nullable=True, default=False)
+    false_positive_reason: Mapped[str] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

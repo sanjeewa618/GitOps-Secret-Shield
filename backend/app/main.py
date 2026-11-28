@@ -5,22 +5,47 @@ from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from sqlalchemy import text
 from app.database.base import Base
 from app.database.session import engine
 import app.models.incident  # noqa: F401 – ensures models are registered with Base
+import app.models.git_history_finding  # noqa: F401
+import app.models.remediation_audit  # noqa: F401
+import app.models.false_positive  # noqa: F401
 from app.routes.webhook import router as webhook_router
 from app.routes.incidents import router as incidents_router
 from app.routes.auth import router as auth_router
+from app.routes.phase3 import router as phase3_router
 from app.middleware.rate_limit import RateLimitMiddleware
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_phase3_migrations():
+    """Safely add Phase 3 columns to existing incidents table if missing."""
+    alter_statements = [
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS secret_fingerprint VARCHAR(64);",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS secret_category VARCHAR(64) DEFAULT 'generic_secret';",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS risk_score DOUBLE PRECISION DEFAULT 75.0;",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS risk_factors TEXT;",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS correlation_group_id VARCHAR(64);",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS occurrence_count INTEGER DEFAULT 1;",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ;",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS is_false_positive BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS false_positive_reason TEXT;",
+    ]
+    with engine.begin() as conn:
+        for stmt in alter_statements:
+            conn.execute(text(stmt))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure database tables exist on startup
     Base.metadata.create_all(bind=engine)
-    logger.info("[Startup] Database tables created/verified.")
+    _apply_phase3_migrations()
+    logger.info("[Startup] Database tables and Phase 3 migrations verified.")
     yield
     logger.info("[Shutdown] Application shutting down.")
 
@@ -54,6 +79,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")           # Phase 2: auth
 app.include_router(webhook_router, prefix="/webhooks", tags=["GitHub Webhooks"])
 app.include_router(incidents_router, prefix="/api/v1", tags=["Security Incidents"])
+app.include_router(phase3_router, prefix="/api/v1")         # Phase 3: intelligence & remediation
 
 
 @app.get("/")

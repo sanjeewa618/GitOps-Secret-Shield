@@ -46,11 +46,22 @@ class IncidentService:
             remediation_status=incident_in.remediation_status or "pending",
             remediation_notes=incident_in.remediation_notes,
             vault_secret_path=incident_in.vault_secret_path,
+            secret_fingerprint=incident_in.secret_fingerprint,
+            secret_category=incident_in.secret_category or "generic_secret",
+            risk_score=incident_in.risk_score if incident_in.risk_score is not None else 75.0,
+            risk_factors=incident_in.risk_factors,
+            is_false_positive=incident_in.is_false_positive or False,
+            false_positive_reason=incident_in.false_positive_reason,
         )
 
         db.add(db_incident)
         db.commit()
         db.refresh(db_incident)
+
+        # Phase 3: Correlate related incidents by fingerprint / metadata
+        from app.services.correlation_service import CorrelationService
+        db_incident = CorrelationService.correlate_incident(db, db_incident)
+
         logger.info(f"Created new security incident {db_incident.incident_id} for {db_incident.repository}")
         return db_incident, True
 

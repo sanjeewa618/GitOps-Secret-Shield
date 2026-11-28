@@ -17,6 +17,14 @@ class IncidentBase(BaseModel):
     remediation_status: Optional[str] = "pending"
     remediation_notes: Optional[str] = None
     vault_secret_path: Optional[str] = None
+    secret_fingerprint: Optional[str] = None
+    secret_category: Optional[str] = "generic_secret"
+    risk_score: Optional[float] = 75.0
+    risk_factors: Optional[str] = None
+    correlation_group_id: Optional[str] = None
+    occurrence_count: Optional[int] = 1
+    is_false_positive: Optional[bool] = False
+    false_positive_reason: Optional[str] = None
 
 
 class IncidentCreate(IncidentBase):
@@ -28,6 +36,14 @@ class IncidentUpdate(BaseModel):
     remediation_status: Optional[str] = None
     remediation_notes: Optional[str] = None
     vault_secret_path: Optional[str] = None
+    secret_fingerprint: Optional[str] = None
+    secret_category: Optional[str] = "generic_secret"
+    risk_score: Optional[float] = 75.0
+    risk_factors: Optional[str] = None
+    correlation_group_id: Optional[str] = None
+    occurrence_count: Optional[int] = 1
+    is_false_positive: Optional[bool] = False
+    false_positive_reason: Optional[str] = None
 
 
 class IncidentResponse(IncidentBase):
@@ -35,6 +51,8 @@ class IncidentResponse(IncidentBase):
 
     id: int
     incident_id: str
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

@@ -12,6 +12,7 @@ from app.schemas.incident import IncidentCreate
 from app.services.incident_service import IncidentService
 from app.services.github_service import GitHubService
 from app.services.scanner_service import ScannerService
+from app.services.false_positive_service import FalsePositiveService
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -88,11 +89,26 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
                             finding["author"] = pusher
                             raw_findings.append(finding)
 
-        # Step 5c: If secrets are detected, persist audit logs to PostgreSQL & trigger alert
+        # Step 5c: If secrets are detected, check active false-positive rules, persist audit logs & trigger alert
         if raw_findings:
             persisted_incidents = []
             for finding in raw_findings:
                 commit_sha = finding.get("commit_sha", (commits[0].get("id") if commits else "unknown"))
+                fp = finding.get("secret_fingerprint")
+                suppressed_rule = FalsePositiveService.is_suppressed(
+                    db,
+                    secret_fingerprint=fp,
+                    detector_name=finding.get("detector_name"),
+                    repository=repo_name,
+                    file_path=finding.get("file_path"),
+                )
+                if suppressed_rule:
+                    logger.info(
+                        f"Finding suppressed by active false-positive rule #{suppressed_rule.id} "
+                        f"for {repo_name}:{finding.get('file_path')}"
+                    )
+                    continue
+
                 incident_in = IncidentCreate(
                     repository=repo_name,
                     commit_sha=commit_sha,
@@ -105,6 +121,10 @@ async def github_webhook(request: Request, db: Session = Depends(get_db)):
                     status=IncidentStatus.ROTATION_REQUIRED.value,
                     remediation_status="rotation_required",
                     remediation_notes=f"Exposed secret detected in push by {pusher} in commit {commit_sha[:7]}",
+                    secret_fingerprint=fp,
+                    secret_category=finding.get("secret_category", "generic_secret"),
+                    risk_score=finding.get("risk_score", 75.0),
+                    risk_factors=finding.get("risk_factors"),
                 )
                 incident_obj, created = IncidentService.create_or_get_incident(db, incident_in)
 

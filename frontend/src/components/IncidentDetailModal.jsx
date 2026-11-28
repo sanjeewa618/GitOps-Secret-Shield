@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 
 export default function IncidentDetailModal({ incident, onClose, onRefresh, onTriggerRotate }) {
@@ -7,11 +7,35 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
   const [newStatus, setNewStatus] = useState(incident.status);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
 
+  // Phase 3 state
+  const [correlated, setCorrelated] = useState(null);
+  const [remediationPlan, setRemediationPlan] = useState(null);
+  const [remediationAudit, setRemediationAudit] = useState([]);
+  const [fpReason, setFpReason] = useState('');
+  const [fpLoading, setFpLoading] = useState(false);
+
+  useEffect(() => {
+    if (!incident) return;
+    api.getCorrelatedIncidents(incident.incident_id).then(setCorrelated).catch(() => {});
+    api.getRemediationPlan(incident.incident_id).then(setRemediationPlan).catch(() => {});
+    api.getRemediationAudit(incident.incident_id).then((d) => setRemediationAudit(d.audit_logs || [])).catch(() => {});
+  }, [incident?.incident_id]);
+
   if (!incident) return null;
 
   const isDbSecret =
     incident.detector_name.toLowerCase().includes('database') ||
-    incident.detector_name.toLowerCase().includes('postgres');
+    incident.detector_name.toLowerCase().includes('postgres') ||
+    incident.detector_name.toLowerCase().includes('mysql') ||
+    incident.detector_name.toLowerCase().includes('redis') ||
+    incident.detector_name.toLowerCase().includes('mongo');
+
+  let parsedRiskFactors = null;
+  try {
+    parsedRiskFactors = incident.risk_factors ? JSON.parse(incident.risk_factors) : null;
+  } catch {
+    parsedRiskFactors = null;
+  }
 
   const handleRotate = async () => {
     setIsRotating(true);
@@ -27,6 +51,58 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
       setRotationMsg({ success: false, text: err.message });
     } finally {
       setIsRotating(false);
+    }
+  };
+
+  const handleDryRun = async () => {
+    setIsRotating(true);
+    setRotationMsg(null);
+    try {
+      const res = await api.executeRemediation(incident.incident_id, { dry_run: true, approved: false });
+      setRotationMsg({ success: true, text: `DRY-RUN: ${res.plan?.proposed_action || res.message}` });
+      const auditRes = await api.getRemediationAudit(incident.incident_id);
+      setRemediationAudit(auditRes.audit_logs || []);
+    } catch (err) {
+      setRotationMsg({ success: false, text: `Dry-run error (requires admin sign-in): ${err.message}` });
+    } finally {
+      setIsRotating(false);
+    }
+  };
+
+  const handleApprovedExecute = async () => {
+    setIsRotating(true);
+    setRotationMsg(null);
+    try {
+      const res = await api.executeRemediation(incident.incident_id, { dry_run: false, approved: true });
+      setRotationMsg({
+        success: Boolean(res.success),
+        text: res.notes || (res.success ? 'Approved remediation executed & verified!' : 'Remediation requires manual action or metadata.'),
+      });
+      onRefresh();
+      const auditRes = await api.getRemediationAudit(incident.incident_id);
+      setRemediationAudit(auditRes.audit_logs || []);
+    } catch (err) {
+      setRotationMsg({ success: false, text: `Execution error: ${err.message}` });
+    } finally {
+      setIsRotating(false);
+    }
+  };
+
+  const handleToggleFalsePositive = async () => {
+    setFpLoading(true);
+    try {
+      const nextState = !incident.is_false_positive;
+      await api.markIncidentFalsePositive(incident.incident_id, {
+        is_false_positive: nextState,
+        reason: fpReason || (nextState ? 'Verified non-production placeholder' : 'Reopened for investigation'),
+      });
+      setFpReason('');
+      onRefresh();
+      onClose();
+    } catch (err) {
+      alert(`False-positive update failed (admin sign-in required): ${err.message}`);
+    } finally {
+      setFpLoading(false);
     }
   };
 
@@ -53,13 +129,18 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
               🛡️
             </span>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base font-extrabold text-white font-mono">
                   {incident.incident_id}
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-rose-950 text-rose-400 border border-rose-800">
-                  {incident.severity}
+                  {incident.severity} · Risk {incident.risk_score ?? 75}/100
                 </span>
+                {incident.is_false_positive && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                    FALSE POSITIVE
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 font-mono mt-0.5">
                 Commit: <span className="text-cyan-400">{incident.commit_sha?.slice(0, 10)}</span> by {incident.author}
@@ -77,8 +158,10 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
         {/* Metadata Grid */}
         <div className="grid grid-cols-2 gap-4 font-mono text-xs">
           <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
-            <div className="text-[10px] text-slate-500 uppercase">Detector Rule</div>
-            <div className="text-slate-200 font-bold mt-0.5">{incident.detector_name}</div>
+            <div className="text-[10px] text-slate-500 uppercase">Detector & Category</div>
+            <div className="text-slate-200 font-bold mt-0.5">
+              {incident.detector_name} ({incident.secret_category || 'generic_secret'})
+            </div>
           </div>
           <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
             <div className="text-[10px] text-slate-500 uppercase">Masked Secret Value</div>
@@ -97,10 +180,39 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
             <div className="text-emerald-400 font-bold mt-0.5">{incident.status}</div>
           </div>
           <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800">
-            <div className="text-[10px] text-slate-500 uppercase">Remediation Status</div>
-            <div className="text-amber-400 font-bold mt-0.5">{incident.remediation_status}</div>
+            <div className="text-[10px] text-slate-500 uppercase">Correlation & Occurrences</div>
+            <div className="text-amber-400 font-bold mt-0.5">
+              {incident.occurrence_count || 1}x ({incident.correlation_group_id || 'Single'})
+            </div>
           </div>
         </div>
+
+        {/* Risk Factors Breakdown (Phase 3) */}
+        {parsedRiskFactors && (
+          <div className="p-3 rounded-lg bg-slate-950/70 border border-slate-800 font-mono text-[11px] space-y-1">
+            <div className="text-[10px] text-slate-400 uppercase font-bold">
+              Risk Scoring Breakdown ({parsedRiskFactors.risk_assessment_type})
+            </div>
+            <div className="text-slate-300">
+              Base: {parsedRiskFactors.base_sensitivity_score} · Location: {parsedRiskFactors.location_factor} ({parsedRiskFactors.location_adjustment >= 0 ? '+' : ''}{parsedRiskFactors.location_adjustment}) · Verification: {parsedRiskFactors.verification_fact}
+            </div>
+          </div>
+        )}
+
+        {/* Correlated Incidents (Phase 3) */}
+        {correlated && correlated.related && correlated.related.length > 0 && (
+          <div className="p-3 rounded-lg bg-cyan-950/20 border border-cyan-500/30 font-mono text-xs space-y-1.5">
+            <div className="text-[10px] text-cyan-400 uppercase font-bold">
+              Correlated Exposures ({correlated.related.length} related)
+            </div>
+            {correlated.related.map((r) => (
+              <div key={r.incident_id} className="text-[11px] text-slate-300 flex justify-between">
+                <span>{r.incident_id} · {r.file_path}:{r.line_number}</span>
+                <span className="text-slate-400">{r.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Vault Secret Path (if any) */}
         {incident.vault_secret_path && (
@@ -123,42 +235,43 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
           </p>
         </div>
 
-        {/* Dynamic Remediation Playbook */}
+        {/* Dynamic Remediation Playbook + Dry-Run & Approval (Phase 3) */}
         <div className="p-4 rounded-lg border border-slate-800 bg-slate-950 space-y-3">
           <div className="text-xs font-bold text-white flex items-center gap-2">
-            <span>🛡️</span> Security Remediation Playbook
+            <span>🛡️</span> Security Remediation Playbook & Workflow
           </div>
 
-          {isDbSecret ? (
-            <div className="space-y-3">
-              <p className="text-xs text-slate-400">
-                This is a database credential leak. Our automated rotation engine can directly generate a new 32-character high-entropy password, alter the database role, and store the updated secret in HashiCorp Vault.
-              </p>
+          {remediationPlan && (
+            <p className="text-xs text-slate-300 leading-relaxed">
+              {remediationPlan.proposed_action}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={handleDryRun}
+              disabled={isRotating}
+              className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 font-bold text-xs rounded-lg transition-colors disabled:opacity-50"
+            >
+              Dry-Run Preview
+            </button>
+            <button
+              onClick={handleApprovedExecute}
+              disabled={isRotating || incident.status === 'rotated'}
+              className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition-colors disabled:opacity-50"
+            >
+              {incident.status === 'rotated' ? 'Already Rotated' : 'Approve & Execute Remediation'}
+            </button>
+            {isDbSecret && (
               <button
                 onClick={handleRotate}
                 disabled={isRotating || incident.status === 'rotated'}
-                className="w-full py-2 px-4 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                className="px-3 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded-lg transition-colors disabled:opacity-50"
               >
-                {isRotating
-                  ? 'Executing Automated Rotation...'
-                  : incident.status === 'rotated'
-                  ? 'Already Rotated & Secured in Vault'
-                  : 'Trigger Zero-Touch Auto-Rotation'}
+                Quick Auto-Rotate
               </button>
-            </div>
-          ) : (
-            <div className="space-y-2 text-xs text-slate-300 font-mono">
-              <p className="text-[11px] text-slate-400 font-sans">
-                Automated rotation is not currently enabled for {incident.detector_name}. Execute the manual remediation steps below:
-              </p>
-              <div className="p-3 bg-slate-900 rounded border border-slate-800 text-[11px] text-slate-300 space-y-1">
-                <div>1. Log into your {incident.detector_name} provider management console.</div>
-                <div>2. Locate the exposed key ending in <code>{incident.secret_masked.slice(-4)}</code>.</div>
-                <div>3. Immediately deactivate and permanently revoke the compromised credential.</div>
-                <div>4. Generate a new key and update your CI/CD pipeline secrets.</div>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {rotationMsg && (
             <div className={`p-3 rounded text-xs font-mono ${
@@ -167,6 +280,36 @@ export default function IncidentDetailModal({ incident, onClose, onRefresh, onTr
               {rotationMsg.text}
             </div>
           )}
+
+          {remediationAudit.length > 0 && (
+            <div className="pt-2 border-t border-slate-800/80 space-y-1">
+              <div className="text-[10px] font-mono text-slate-400 uppercase">Remediation Audit Trail</div>
+              {remediationAudit.slice(0, 4).map((a) => (
+                <div key={a.id} className="text-[11px] font-mono text-slate-400 flex justify-between">
+                  <span>{a.action_type} ({a.status}) by {a.approved_by || 'system'}</span>
+                  <span>{a.verified ? 'verified' : a.dry_run ? 'dry-run' : 'unverified'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* False Positive Control (Phase 3) */}
+        <div className="p-3 rounded-lg border border-slate-800 bg-slate-950/60 flex flex-col sm:flex-row gap-2 items-center justify-between">
+          <input
+            type="text"
+            value={fpReason}
+            onChange={(e) => setFpReason(e.target.value)}
+            placeholder="Reason to mark/unmark as false positive..."
+            className="flex-1 w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs font-mono text-slate-200"
+          />
+          <button
+            onClick={handleToggleFalsePositive}
+            disabled={fpLoading}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-xs font-mono whitespace-nowrap"
+          >
+            {incident.is_false_positive ? 'Clear False Positive' : 'Mark False Positive'}
+          </button>
         </div>
 
         {/* Change Status Action */}

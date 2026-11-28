@@ -4,6 +4,7 @@ import Overview from './components/Overview';
 import IncidentList from './components/IncidentList';
 import RotationConsole from './components/RotationConsole';
 import VaultViewer from './components/VaultViewer';
+import IntelligencePanel from './components/IntelligencePanel';
 import IncidentDetailModal from './components/IncidentDetailModal';
 import { api } from './services/api';
 
@@ -153,6 +154,18 @@ export default function App() {
             <span>🔒</span>
             <span>HashiCorp Vault Inspector</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('intelligence')}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'intelligence'
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+            }`}
+          >
+            <span>🧠</span>
+            <span>Intelligence & History</span>
+          </button>
         </div>
 
         {/* Tab Content */}
@@ -185,6 +198,12 @@ export default function App() {
           <VaultViewer
             health={health}
             incidents={incidents}
+          />
+        )}
+
+        {activeTab === 'intelligence' && (
+          <IntelligencePanel
+            onRefreshIncidents={loadData}
           />
         )}
       </main>
